@@ -1,5 +1,7 @@
 <RCC>
     <qresource prefix="/">
+        <file>qtquickcontrols2.conf</file>
         <file>qml/li.qml</file>
+        <file>qml/LMenuBar.qml</file>
     </qresource>
 </RCC>
