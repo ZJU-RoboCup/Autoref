@@ -2,9 +2,11 @@
 #include <QQmlApplicationEngine>
 #include <QQuickStyle>
 #include "interaction.h"
-#include <parammanager.h>
+#include "parammanager.h"
+#include "field.h"
 void qmlRegister(){
     qmlRegisterType<Interaction>("Li", 1, 0, "Interaction");
+    qmlRegisterType<Field>("Li", 1, 0, "Field");
 }
 int main(int argc, char *argv[])
 {
