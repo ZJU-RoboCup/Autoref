@@ -3,6 +3,7 @@
 #include <QQuickStyle>
 #include "interaction.h"
 #include "parammanager.h"
+#include "pluginmanager.h"
 #include "field.h"
 void qmlRegister(){
     qmlRegisterType<Interaction>("Li", 1, 0, "Interaction");
@@ -19,7 +20,10 @@ int main(int argc, char *argv[])
     ZSS::LParamManager::instance()->loadParam(theme,"theme/name","Universal");
     qDebug() << "use theme : " << theme;
     QQuickStyle::setStyle(theme);
+
     qmlRegister();
+    AutorefPM::instance()->init();
+
     QQmlApplicationEngine engine;
     const QUrl url(QStringLiteral("qrc:/qml/li.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,
@@ -29,5 +33,9 @@ int main(int argc, char *argv[])
     }, Qt::QueuedConnection);
     engine.load(url);
 
-    return app.exec();
+    auto res = app.exec();
+
+    AutorefPM::instance()->exit();
+
+    return res;
 }

@@ -27,12 +27,24 @@ class ParamManager {
   protected:
     QSettings *settings;
 };
+class ParamManagerLi: public ParamManager {
+  public:
+    ParamManagerLi(): ParamManager("li.ini") {}
+    ~ParamManagerLi() {}
+};
 class ParamManagerZSS: public ParamManager {
   public:
-    ParamManagerZSS(): ParamManager("li.ini") {}
+    ParamManagerZSS(): ParamManager("zss.ini") {}
     ~ParamManagerZSS() {}
 };
-typedef Singleton<ParamManagerZSS> LParamManager;
+class ParamManagerVisionParam: public ParamManager {
+  public:
+    ParamManagerVisionParam(): ParamManager("visionparam.ini") {}
+    ~ParamManagerVisionParam() {}
+};
+typedef Singleton<ParamManagerZSS> ZParamManager;
+typedef Singleton<ParamManagerVisionParam> VParamManager;
+typedef Singleton<ParamManagerLi> LParamManager;
 }
 
 #endif // PARAMMANAGER_H

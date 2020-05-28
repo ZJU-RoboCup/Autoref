@@ -23,6 +23,7 @@
 #include <mutex>
 #include <cstring>
 #include <condition_variable>
+#include <atomic>
 
 class Semaphore_base {
 public:
@@ -39,6 +40,7 @@ public:
     virtual void signal(unsigned int c) = 0;
     virtual void wait() = 0;
     virtual bool try_wait() = 0;
+    virtual void self_unlock() = 0;// use for destory;
 };
 class SemaphoreM:public Semaphore_base {
 public:
@@ -54,6 +56,7 @@ public:
         #endif
     }
     virtual ~SemaphoreM(){
+        self_unlock();
         #ifdef ZSPLUGIN_DEBUG
         std::cout << this << " SemaphoreM destructor" << std::endl;
         #endif
@@ -62,6 +65,11 @@ public:
         std::unique_lock<std::mutex> lock(mutex_);
         count_+=c;
         cv_.notify_one();
+    }
+    virtual void self_unlock() override {
+        std::unique_lock<std::mutex> lock(mutex_);
+        count_ = 99999;
+        cv_.notify_all();
     }
     virtual void wait() override {
         std::unique_lock<std::mutex> lock(mutex_);
@@ -96,6 +104,7 @@ public:
         #endif
     }
     virtual ~SemaphoreO(){
+        self_unlock();
         #ifdef ZSPLUGIN_DEBUG
         std::cout << this << " SemaphoreO destructor" << std::endl;
         #endif
@@ -105,7 +114,11 @@ public:
         count_=c;
         cv_.notify_one();
     }
-
+    virtual void self_unlock() override {
+        std::unique_lock<std::mutex> lock(mutex_);
+        count_ = 99999;
+        cv_.notify_all();
+    }
     virtual void wait() override {
         std::unique_lock<std::mutex> lock(mutex_);
         cv_.wait(lock, [=] { return count_ > 0; });
@@ -215,7 +228,8 @@ public:
     virtual void store(const void* const data,unsigned long size) override{
         std::unique_lock<std::shared_mutex> lock(_mutex);
         resize(size);
-        memcpy(_data,data,size);
+        if(size > 0)
+            memcpy(_data,data,size);
     }
     // thread-unsafe
     virtual const void* data() const { return _data; }
@@ -279,7 +293,8 @@ public:
             _capacity++;
         }
         storeNode->resize(size);
-        memcpy(storeNode->_data,data,size);
+        if(size > 0)
+            memcpy(storeNode->_data,data,size);
         _size++;
         #ifdef ZSPLUGIN_DEBUG
             std::cout << this << " ZSDataQueue store() " << storeNode << ' ' << data << ", size=" << _size << ", capacity=" << _capacity << std::endl;
@@ -311,14 +326,14 @@ public:
             _semaphore = new SemaphoreM();
         }
     }
-    ~ZSSemaData(){
+    virtual ~ZSSemaData(){
         delete _data;
         delete _semaphore;
         #ifdef ZSPLUGIN_DEBUG
         std::cout << this << " ZSSemaData destructor" << std::endl;
         #endif
     }
-    virtual void popTo(ZSData& p){
+    virtual void popTo(ZSData& p) override{
         _data->popTo(p);
     }
     virtual void store(const ZSData& data){
@@ -327,16 +342,19 @@ public:
     virtual void store(const ZSData* data){
         store(data->data(),data->_size);
     }
-    virtual void store(const void* const data,unsigned long size){
+    virtual void store(const void* const data,unsigned long size) override{
         _data->store(data,size);
     }
-    virtual void signal(unsigned int c = 1){
+    virtual void signal(unsigned int c = 1) override{
         _semaphore->signal(c);
     }
-    virtual void wait(){
+    virtual void self_unlock() override{
+        _semaphore->self_unlock();
+    }
+    virtual void wait() override{
         _semaphore->wait();
     }
-    virtual bool try_wait(){
+    virtual bool try_wait() override{
         return _semaphore->try_wait();
     }
 private:
@@ -346,12 +364,12 @@ private:
 
 class ZSPlugin{
 public:
-    ZSPlugin(const std::string& name):_name(name){
+    ZSPlugin(const std::string& name):needExit(false),_name(name){
         #ifdef ZSPLUGIN_DEBUG
         std::cout << this << ' ' << this->_name << " ZSPlugin constructor" << std::endl;
         #endif
     }
-    ZSPlugin(const ZSPlugin&):_name("_copyed"){
+    ZSPlugin(const ZSPlugin&):needExit(false),_name("_copyed"){
         #ifdef ZSPLUGIN_DEBUG
         std::cout << this << ' ' << this->_name << " ZSPlugin copy constructor" << std::endl;
         #endif
@@ -360,33 +378,42 @@ public:
         for(auto it:_databox){
             delete (it.second);
         }
-
         #ifdef ZSPLUGIN_DEBUG
         std::cout << this << ' ' << this->_name << " ZSPlugin destructor" << std::endl;
         #endif
     }
-    virtual void run() = 0;
-    virtual void start() final{
-        _t = std::thread([=]{run();});
-    }
-    virtual void detech() final{
-        _t.detach();
-    }
-    virtual void join() final{
+    virtual void prepareExit(){
+        needExit = true;
+        for(auto it:_databox){
+            it.second->self_unlock();
+        }
         _t.join();
     }
+    std::string name() const{ return _name; }
+    virtual void run() = 0;
+    virtual void start_detach() final{
+        _t = std::thread([=]{run();});
+//        _t.detach();
+    }
+//    virtual void start_join() final{
+//        _t = std::thread([=]{run();});
+//        _t.join();
+//    }
+//    virtual void start() final{
+//        _t = std::thread([=]{run();});
+//    }
+//    virtual void detach() final{
+//        _t.detach();
+//    }
+//    virtual void join() final{
+//        _t.join();
+//    }
     virtual void publish(const std::string& msg,const void* data = nullptr,const unsigned long size = 0) final{
         auto it = _subscribers.find(msg);
         if (it != _subscribers.end()){
-            if (data != nullptr){
-                for(auto p:_subscribers[msg]){
-                    p->store(data,size);
-                    p->signal();
-                }
-            }else{
-                for(auto p:_subscribers[msg]){
-                    p->signal();
-                }
+            for(auto p:_subscribers[msg]){
+                p->store(data,size);
+                p->signal();
             }
         }
         if (it == _subscribers.end()){
@@ -459,7 +486,7 @@ public:
             std::cerr << "ERROR : didn't DECLARE to STORE this kind of message, check your message type : " << msg << std::endl;
             return;
         }
-        std::cout << "link function called : " << msg << std::endl;
+        std::cout << "link : " << this->_name << " [" << msg << "]" << " -> " << p->_name << std::endl;
         it->second.push_back(iit->second);
     }
     virtual void declare_receive(const std::string& msg,bool frameSkipMode = true) final{
@@ -484,6 +511,8 @@ public:
         }
         _subscribers[msg] = {};
     }
+protected:
+    std::atomic<bool> needExit;
 private:
     std::map<std::string,std::list<ZSSemaData*>> _subscribers = {};
     std::map<std::string,ZSSemaData*> _databox = {};

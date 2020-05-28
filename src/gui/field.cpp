@@ -1,4 +1,6 @@
 #include "field.h"
+#include "field_layers.h"
+#include "field_style.h"
 #include "parammanager.h"
 #include <QElapsedTimer>
 #include <QtDebug>
@@ -7,6 +9,7 @@ namespace{
     auto zpm = ZSS::LParamManager::instance();
     auto p = FP::instance();
     auto t = FT::instance();
+    auto s = FS::instance();
 }
 FieldParam::FieldParam(){
     reload();
@@ -23,6 +26,12 @@ void FieldParam::reload(){
     zpm->loadParam(param_penaltyLength, "field/penaltyLength", 1600);
     zpm->loadParam(param_centerCircleRadius, "field/centerCircleRadius",  500);
     zpm->loadParam(param_lineWidth,"field/lineWidth",15);
+    zpm->loadParam(size_ballDiameter, "size/ballDiameter", 100);
+    zpm->loadParam(size_shadowDiameter, "size/shadowDiameter", 30);
+    zpm->loadParam(size_carDiameter, "size/carDiameter", 180);
+    zpm->loadParam(size_carFaceWidth, "size/carFaceWidth", 120);
+    zpm->loadParam(size_number, "size/numberSize", 200);
+    zpm->loadParam(size_debugPoint, "size/debugPointSize", 5);
 }
 FieldCoordsTransform::FieldCoordsTransform():zoomRatio(1){}
 FieldCoordsTransform::~FieldCoordsTransform(){}
@@ -56,81 +65,76 @@ double FieldCoordsTransform::r(double _r) {
 }
 Field::Field(QQuickItem *parent)
     : QQuickPaintedItem(parent)
-    ,pixmap(nullptr){
-    pixmap = new QPixmap();
-    painter.begin(pixmap);
-    linelayer.start();
-    linelayer.detech();
-    init();
+    , ZSPlugin("FieldBase")
+    ,_pixmap(nullptr){
+    declare_publish("draw_signal");
+    addLayers();
+    for(auto _l : _layers){
+        this->link(_l,"draw_signal");
+    }
+
+    int width,height;
+    zpm->loadParam(width,"auto/fieldWidth",500);
+    zpm->loadParam(height,"auto/fieldHeight",350);
+    resetSize(width,height,false);
+    for(auto _l : _layers){
+        _l->start_detach();
+    }
 }
-Field::~Field(){}
+Field::~Field(){
+    for(auto _l : _layers)
+        _l->prepareExit();
+    for(auto _l : _layers)
+        delete _l;
+}
 void Field::paint(QPainter* painter){
-    if(pixmap_mutex.try_lock()){
-        painter->drawPixmap(area, *pixmap);
-        pixmap_mutex.unlock();
+    if(_pixmap_mutex.try_lock()){
+        painter->drawPixmap(_area, *_pixmap);
+        _pixmap_mutex.unlock();
     }
 }
 void Field::init(){
-    painter.setPen(QPen(QBrush(QColor(255,255,255)),20));
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    _painter.setPen(QPen(QBrush(QColor(255,255,255)),20));
+    _painter.setRenderHint(QPainter::Antialiasing, true);
+    _painter.setRenderHint(QPainter::TextAntialiasing, true);
 }
 void Field::repaint(){
-    if(pixmap_mutex.try_lock()){
-        pixmap->fill(QColor(100,0,100));//COLORTODO
-        linelayer.lock();
-        painter.drawImage(0,0,*linelayer.get());
-        linelayer.unlock();
-        pixmap_mutex.unlock();
-        this->update(area);
+    if(_pixmap_mutex.try_lock())
+    {
+        _pixmap->fill(s->COLOR_FIELD);//COLORTODO
+        for(auto _l : _layers){
+            _l->lock();
+            _painter.drawImage(0,0,*(_l->get()));
+            _l->unlock();
+        }
+        _pixmap_mutex.unlock();
+        this->update(_area);
     }
 }
 // Q_INVOKABLE Function
-void Field::resetSize(int width,int height){
-    if (width == 0 || height == 0) return;
+void Field::resetSize(int width,int height,bool update){
+    if (width <= 0 || height <= 0) return;
+    if (width == _area.width() && height == _area.height()) return;
     t->resize(width,height);
-    linelayer.resize(width,height);
-    pixmap_mutex.lock();
+    for(auto _l : _layers){
+        _l->resize(width,height);
+    }
+    publish("draw_signal");
+    if(update){
+        zpm->changeParam("auto/fieldWidth",width);
+        zpm->changeParam("auto/fieldHeight",height);
+    }
+    _pixmap_mutex.lock();
     {
-        qDebug() << "field resize function : " << width << height;
-        if(painter.isActive())
-            painter.end();
-        delete pixmap;
-        pixmap = new QPixmap(QSize(this->property("width").toReal(), this->property("height").toReal()));
-        painter.begin(pixmap);
-        area = QRect(0, 0, this->property("width").toReal(), this->property("height").toReal());
+        qDebug() << "\"fieldBase\" resize function : " << width << height;
+        if(_painter.isActive())
+            _painter.end();
+        delete _pixmap;
+        _pixmap = new QPixmap(QSize(width,height));
+        _pixmap->fill(s->COLOR_FIELD);
+        _painter.begin(_pixmap);
+        _area = QRect(0, 0, width, height);
         init();
     }
-    pixmap_mutex.unlock();
-}
-LineLayer::LineLayer():ZSS::Layer("FieldLine"){
-}
-void LineLayer::init(){
-    painter.setPen(QPen(QBrush(QColor(150, 150, 150)),t->w(p->param_lineWidth)));
-    painter.setRenderHint(QPainter::Antialiasing, true);
-    painter.setRenderHint(QPainter::TextAntialiasing, true);
-    initFieldLinePath();
-}
-void LineLayer::run(){
-    init();
-    while(true){
-        if(image_mutex.try_lock()){
-            image->fill(QColor(48,48,48));
-//            painter.drawLine(t->x(-100),t->y(-100),t->x(100),t->y(100));
-            painter.drawPath(fieldLinePath);
-            image_mutex.unlock();
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-}
-void LineLayer::initFieldLinePath(){
-    fieldLinePath.clear();
-    fieldLinePath.addRect(t->x(-p->param_width / 2.0), t->y(-p->param_height / 2.0), t->w(p->param_width), t->h(p->param_height));
-    fieldLinePath.addRect(t->x(-p->param_width / 2.0), t->y(-p->param_goalWidth / 2.0), t->w(-p->param_goalDepth), t->h(p->param_goalWidth));
-    fieldLinePath.addRect(t->x(p->param_width / 2.0), t->y(-p->param_goalWidth / 2.0), t->w(p->param_goalDepth), t->h(p->param_goalWidth));
-    fieldLinePath.moveTo(t->x(0), t->y(p->param_height / 2.0));
-    fieldLinePath.lineTo(t->x(0), t->y(-p->param_height / 2.0));
-    fieldLinePath.addEllipse(t->x(-p->param_centerCircleRadius), t->y(-p->param_centerCircleRadius), t->w(2 * p->param_centerCircleRadius), t->h(2 * p->param_centerCircleRadius));
-    fieldLinePath.addRect(t->x(-p->param_width / 2.0), t->y(-p->param_penaltyLength / 2.0), t->w(p->param_penaltyWidth), t->h(p->param_penaltyLength));
-    fieldLinePath.addRect(t->x(p->param_width / 2.0), t->y(-p->param_penaltyLength / 2.0), t->w(-p->param_penaltyWidth), t->h(p->param_penaltyLength));
+    _pixmap_mutex.unlock();
 }

@@ -5,6 +5,7 @@
 #include <QPixmap>
 #include <QPainter>
 #include <mutex>
+#include <vector>
 #include "zslayer.h"
 #include "singleton.hpp"
 class FieldParam{
@@ -23,6 +24,12 @@ public:
     int param_penaltyLength;
     int param_centerCircleRadius;
     int param_lineWidth;
+    int size_ballDiameter;
+    int size_shadowDiameter;
+    int size_carDiameter;
+    int size_carFaceWidth;
+    int size_number;
+    int size_debugPoint;
 };
 class FieldCoordsTransform{
 public:
@@ -45,31 +52,23 @@ public:
 typedef Singleton<FieldParam> FP;
 typedef Singleton<FieldCoordsTransform> FT;
 
-class LineLayer : public ZSS::Layer{
-public:
-    LineLayer();
-    void init() override;
-    void run() override;
-private:
-    void initFieldLinePath();
-    QPainterPath fieldLinePath;
-};
-
-class Field : public QQuickPaintedItem{
+class Field : public QQuickPaintedItem,public ZSPlugin{
     Q_OBJECT
 public:
-    Q_INVOKABLE void resetSize(int,int);
+    Q_INVOKABLE void resetSize(int,int,bool update = true);
 public:
     Field(QQuickItem *parent = 0);
     virtual ~Field();
     void paint(QPainter* painter) override;
+    void run() override{}
+    void addLayers();
     Q_INVOKABLE void repaint();
 private:
     void init();
-    QPixmap* pixmap;
-    QPainter painter;
-    QRect area;
-    std::mutex pixmap_mutex;
-    LineLayer linelayer;
+    QPixmap* _pixmap;
+    QPainter _painter;
+    QRect _area;
+    std::mutex _pixmap_mutex;
+    std::vector<ZSS::Layer*> _layers; // layer list
 };
 #endif // FIELD_H

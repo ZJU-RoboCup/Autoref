@@ -5,10 +5,16 @@ import Li 1.0 as Li
 ApplicationWindow {
     id:root
     visible: true
-    width: 640
-    height: 480
-    minimumHeight: 100;
-    minimumWidth: 100;
+    Li.Interaction { id : interaction }
+    property int fieldWidth:interaction.getFieldWidth();
+    property int fieldHeight:interaction.getFieldHeight();
+    property int statusHeight:300;
+    property int controlWidth:250;
+    property int menuHeight:40;
+    width: fieldWidth+controlWidth;
+    height: fieldHeight+statusHeight+menuHeight;
+    minimumHeight: 100+statusHeight+menuHeight;
+    minimumWidth: 100+controlWidth;
     title: qsTr("Autoref")
     Timer{
         id:fpsTimer;
@@ -19,16 +25,30 @@ ApplicationWindow {
             field.repaint();
         }
     }
-    Li.Interaction { id : interaction }
-    Li.Field{
-        id:field;
-        width:parent.width;
+    Item{
+        id:left;
         height:parent.height;
-        x:0;//parent.width;
-        y:0;//parent.height;
-        function resize(){ resetSize(width,height); }
-        onWidthChanged: resize();
-        onHeightChanged: resize();
+        width:parent.width - control.width;
+        Li.Field{
+            id:field;
+            width:parent.width;
+            height:parent.height-status.height;
+            function resize(){ resetSize(width,height); }
+            onWidthChanged: {resize();}
+            onHeightChanged: {resize();}
+        }
+        StatusBoard{
+            id:status;
+            width:parent.width;
+            height:root.statusHeight;
+            anchors.top: field.bottom;
+        }
     }
-    menuBar:LMenuBar{interaction:interaction}
+    ControlBoard{
+        id:control;
+        width:root.controlWidth;
+        height:parent.height;
+        anchors.left:left.right;
+    }
+    menuBar:LMenuBar{interaction:interaction;contentHeight: root.menuHeight;}
 }
