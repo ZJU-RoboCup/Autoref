@@ -5,7 +5,7 @@
  * Introduction : 
  *     (Semaphore_base)────┐             ┌──────(ZSData_base) 
  *        /        \       |             |     /      \    
- *    (SemaO)    (SemaM)  (ZSSemaDavta_Base)  (ZSData) (ZSDataQueue)
+ *    (SemaO)    (SemaM)  (ZSSemaData_Base)  (ZSData) (ZSDataQueue)
  *       |          |          /     \         |            |
  *       |          ├(ZSemaData NoFS)  (ZSemaData FS)       |
  *       └──────────│──────────────────────────┘            |
@@ -38,9 +38,9 @@ public:
         #endif
     }
     virtual void signal(unsigned int c) = 0;
-    virtual void wait() = 0;
+    virtual void notify_current() = 0;
+    virtual bool wait(int idx) = 0;
     virtual bool try_wait() = 0;
-    virtual void self_unlock() = 0;// use for destory;
 };
 class SemaphoreM:public Semaphore_base {
 public:
@@ -56,25 +56,32 @@ public:
         #endif
     }
     virtual ~SemaphoreM(){
-        self_unlock();
+        notify_current();
         #ifdef ZSPLUGIN_DEBUG
         std::cout << this << " SemaphoreM destructor" << std::endl;
         #endif
+    }
+    virtual void notify_current() override{
+        std::unique_lock<std::mutex> lock(mutex_);
+        count_ = 99999;
+        cv_.notify_all();
     }
     virtual void signal(unsigned int c = 1) override {
         std::unique_lock<std::mutex> lock(mutex_);
         count_+=c;
         cv_.notify_one();
     }
-    virtual void self_unlock() override {
+    virtual bool wait(int idx) override {
         std::unique_lock<std::mutex> lock(mutex_);
-        count_ = 99999;
-        cv_.notify_all();
-    }
-    virtual void wait() override {
-        std::unique_lock<std::mutex> lock(mutex_);
-        cv_.wait(lock, [=] { return count_ > 0; });
-        --count_;
+        if(idx == 0){
+            cv_.wait(lock, [=] { return count_ > 0; });
+            return true;
+        }
+        auto res = cv_.wait_for(lock, idx*std::chrono::milliseconds(100), [=] { return count_ > 0; });
+        if(res) {
+            --count_;
+        }
+        return res;
     }
     virtual bool try_wait() override {
         std::unique_lock<std::mutex> lock(mutex_);
@@ -104,7 +111,7 @@ public:
         #endif
     }
     virtual ~SemaphoreO(){
-        self_unlock();
+        notify_current();
         #ifdef ZSPLUGIN_DEBUG
         std::cout << this << " SemaphoreO destructor" << std::endl;
         #endif
@@ -114,17 +121,24 @@ public:
         count_=c;
         cv_.notify_one();
     }
-    virtual void self_unlock() override {
+    virtual void notify_current() override{
         std::unique_lock<std::mutex> lock(mutex_);
         count_ = 99999;
         cv_.notify_all();
     }
-    virtual void wait() override {
+    virtual bool wait(int idx) override {
         std::unique_lock<std::mutex> lock(mutex_);
-        cv_.wait(lock, [=] { return count_ > 0; });
-        --count_;
+        if(idx == 0){
+            cv_.wait(lock, [=] { return count_ > 0; });
+            --count_;
+            return true;
+        }
+        auto res = cv_.wait_for(lock, idx*std::chrono::milliseconds(100), [=] { return count_ > 0; });
+        if(res){
+            --count_;
+        }
+        return res;
     }
-
     virtual bool try_wait() override {
         std::unique_lock<std::mutex> lock(mutex_);
         if(count_ > 0){
@@ -242,7 +256,7 @@ protected:
 
 class ZSDataQueue:public ZSData_base{
 public:
-    ZSDataQueue():_start(new ZSDataNode()),_end(_start),_capacity(1),_size(0){
+    ZSDataQueue():_size(0),_capacity(1),_start(new ZSDataNode()),_end(_start){
         #ifdef ZSPLUGIN_DEBUG
         std::cout << this << " ZSDataQueue constructor" << std::endl;
         #endif
@@ -348,14 +362,14 @@ public:
     virtual void signal(unsigned int c = 1) override{
         _semaphore->signal(c);
     }
-    virtual void self_unlock() override{
-        _semaphore->self_unlock();
-    }
-    virtual void wait() override{
-        _semaphore->wait();
+    virtual bool wait(int idx = 1) override{
+        return _semaphore->wait(idx);
     }
     virtual bool try_wait() override{
         return _semaphore->try_wait();
+    }
+    virtual void notify_current() override{
+        return _semaphore->notify_current();
     }
 private:
     ZSData_base* _data;
@@ -364,12 +378,12 @@ private:
 
 class ZSPlugin{
 public:
-    ZSPlugin(const std::string& name):needExit(false),_name(name){
+    ZSPlugin(const std::string& name):_controlCode(0),_name(name){
         #ifdef ZSPLUGIN_DEBUG
         std::cout << this << ' ' << this->_name << " ZSPlugin constructor" << std::endl;
         #endif
     }
-    ZSPlugin(const ZSPlugin&):needExit(false),_name("_copyed"){
+    ZSPlugin(const ZSPlugin&):_controlCode(0),_name("_copyed"){
         #ifdef ZSPLUGIN_DEBUG
         std::cout << this << ' ' << this->_name << " ZSPlugin copy constructor" << std::endl;
         #endif
@@ -382,32 +396,28 @@ public:
         std::cout << this << ' ' << this->_name << " ZSPlugin destructor" << std::endl;
         #endif
     }
-    virtual void prepareExit(){
-        needExit = true;
-        for(auto it:_databox){
-            it.second->self_unlock();
-        }
-        _t.join();
-    }
     std::string name() const{ return _name; }
     virtual void run() = 0;
     virtual void start_detach() final{
-        _t = std::thread([=]{run();});
-//        _t.detach();
+        _t = std::thread([=]{
+            run();_controlCode = CONTROL_EXIT;
+            #ifdef ZSPLUGIN_DEBUG
+            std::cout << this << ' ' << this->_name << " has exit." << std::endl;
+            #endif
+        });
+        _controlCode = CONTROL_RUNNING;
+        _t.detach();
     }
-//    virtual void start_join() final{
-//        _t = std::thread([=]{run();});
-//        _t.join();
-//    }
-//    virtual void start() final{
-//        _t = std::thread([=]{run();});
-//    }
-//    virtual void detach() final{
-//        _t.detach();
-//    }
-//    virtual void join() final{
-//        _t.join();
-//    }
+    virtual void start_join() final{
+        _t = std::thread([=]{
+            run();_controlCode = CONTROL_EXIT;
+            #ifdef ZSPLUGIN_DEBUG
+            std::cout << this << ' ' << this->_name << " has exit." << std::endl;
+            #endif
+        });
+        _controlCode = CONTROL_RUNNING;
+        _t.join();
+    }
     virtual void publish(const std::string& msg,const void* data = nullptr,const unsigned long size = 0) final{
         auto it = _subscribers.find(msg);
         if (it != _subscribers.end()){
@@ -418,8 +428,8 @@ public:
         }
         if (it == _subscribers.end()){
             std::cerr << "ERROR : didn't DECLARE to PUBLISH this kind of message, check your message type : " << msg << std::endl;
-            return;
         }
+        response_to_control();
     }
     virtual void publish(const std::string& msg,const ZSData& data) final{
         auto it = _subscribers.find(msg);
@@ -431,8 +441,8 @@ public:
         }
         if (it == _subscribers.end()){
             std::cerr << "ERROR : didn't DECLARE to PUBLISH this kind of message, check your message type : " << msg << std::endl;
-            return;
         }
+        response_to_control();
     }
     virtual void receive(const std::string& msg){
         auto it = _databox.find(msg);
@@ -440,7 +450,10 @@ public:
             std::cerr << "ERROR : didn't DECLARE to RECEIVE this kind of message, check your message type : " << msg << std::endl;
             return;
         }
-        it->second->wait();
+        while(!it->second->wait()){
+            if(response_to_control() == CONTROL_NEED_EXIT)
+                break;
+        }
     }
     virtual void receive(const std::string& msg,ZSData& data) final{
         auto it = _databox.find(msg);
@@ -448,7 +461,10 @@ public:
             std::cerr << "ERROR : didn't DECLARE to RECEIVE this kind of message, check your message type : " << msg << std::endl;
             return;
         }
-        it->second->wait();
+        while(!it->second->wait()){
+            if(response_to_control() == CONTROL_NEED_EXIT)
+                break;
+        }
         it->second->popTo(data);
     }
     virtual bool try_receive(const std::string& msg,ZSData& data) final{
@@ -461,6 +477,7 @@ public:
         if(res){
             it->second->popTo(data);
         }
+        response_to_control();
         return res;
     }
     virtual bool try_receive(const std::string& msg) final{
@@ -470,6 +487,7 @@ public:
             return false;
         }
         bool res = it->second->try_wait();
+        response_to_control();
         return res;
     }
     virtual void link(ZSPlugin* p,const std::string& msg) final{
@@ -511,13 +529,67 @@ public:
         }
         _subscribers[msg] = {};
     }
+    // control api
+    virtual int get_status(){
+        return _controlCode;
+    }
+    virtual void set_pause(bool pause){
+        if(!pause && _statusCode == CONTROL_PAUSE)
+            _restart.signal();
+        _controlCode = pause ? CONTROL_NEED_PAUSE : CONTROL_NEED_RUN;
+    }
+    virtual void set_exit(){
+        if(_statusCode == CONTROL_PAUSE)
+            _restart.signal();
+        _controlCode = CONTROL_NEED_EXIT;
+    }
+    virtual void wait_for_restart(){
+        #ifdef ZSPLUGIN_DEBUG
+        std::cout << this << " Plugin : " << this->_name << " pause and wait for restart." << std::endl;
+        #endif
+        _restart.wait(0);
+        #ifdef ZSPLUGIN_DEBUG
+        std::cout << this << " Plugin : " << this->_name << " has restart." << std::endl;
+        #endif
+    }
+    virtual int response_to_control(){
+        if(_controlCode == CONTROL_NEED_PAUSE){
+            _statusCode = CONTROL_PAUSE;
+            wait_for_restart();
+            _statusCode = CONTROL_RUNNING;
+        }
+        return _controlCode;
+    }
 protected:
-    std::atomic<bool> needExit;
+    //! \brief controlCode
+    //! \details
+    //! 0 prepare
+    //! 1 need run
+    //! 2 need pause
+    //! 3 need exit
+    std::atomic<int> _controlCode = 0;
+    //! \brief statusCode
+    //! 0 prepare
+    //! 1 running
+    //! 2 pause
+    //! 3 exit
+    std::atomic<int> _statusCode = 0;
+public:
+    const static int CONTROL_PREPARE    = 0;
+    const static int CONTROL_NEED_RUN   = 1;
+    const static int CONTROL_NEED_PAUSE = 2;
+    const static int CONTROL_NEED_EXIT  = 3;
+
+    const static int CONTROL_RUNNING    = 1;
+    const static int CONTROL_PAUSE      = 2;
+    const static int CONTROL_EXIT       = 3;
+
 private:
     std::map<std::string,std::list<ZSSemaData*>> _subscribers = {};
     std::map<std::string,ZSSemaData*> _databox = {};
     std::thread _t;
     std::string _name;
+    SemaphoreO _restart;
 };
 
 #endif // __ZSS_PLUGIN_H__

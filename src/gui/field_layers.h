@@ -1,6 +1,7 @@
 #ifndef __FIELD_LAYERS_H__
 #define __FIELD_LAYERS_H__
 #include "zslayer.h"
+#include <QPainterPath>
 #include "vision_detection.pb.h"
 class FieldLineLayer : public ZSS::Layer{
 public:
