@@ -123,10 +123,9 @@ void CVisionModule::run(){
     SetThreadName("VisionModule");
     ZSData vision;
     SSL_WrapperPacket packet;
-    while(true){
+    while(response_to_control() != CONTROL_NEED_EXIT){
         std::this_thread::sleep_for(std::chrono::microseconds(1));
         receive("ssl_vision",vision);
-        if(needExit) break;
         packet.ParseFromArray(vision.data(), vision.size());
         parse(packet);
     }

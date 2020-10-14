@@ -50,5 +50,5 @@ ApplicationWindow {
         height:parent.height;
         anchors.left:left.right;
     }
-    menuBar:LMenuBar{interaction:interaction;contentHeight: root.menuHeight;}
+//    menuBar:LMenuBar{interaction:interaction;contentHeight: root.menuHeight;}
 }

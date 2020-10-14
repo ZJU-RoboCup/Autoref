@@ -400,22 +400,26 @@ public:
     virtual void run() = 0;
     virtual void start_detach() final{
         _t = std::thread([=]{
-            run();_controlCode = CONTROL_EXIT;
+            run();
+            _statusCode = STATUS_EXIT;
+            _exit.signal();
             #ifdef ZSPLUGIN_DEBUG
             std::cout << this << ' ' << this->_name << " has exit." << std::endl;
             #endif
         });
-        _controlCode = CONTROL_RUNNING;
+        _statusCode = STATUS_RUNNING;
         _t.detach();
     }
     virtual void start_join() final{
         _t = std::thread([=]{
-            run();_controlCode = CONTROL_EXIT;
+            run();
+            _statusCode = STATUS_EXIT;
+            _exit.signal();
             #ifdef ZSPLUGIN_DEBUG
             std::cout << this << ' ' << this->_name << " has exit." << std::endl;
             #endif
         });
-        _controlCode = CONTROL_RUNNING;
+        _statusCode = STATUS_RUNNING;
         _t.join();
     }
     virtual void publish(const std::string& msg,const void* data = nullptr,const unsigned long size = 0) final{
@@ -534,14 +538,23 @@ public:
         return _controlCode;
     }
     virtual void set_pause(bool pause){
-        if(!pause && _statusCode == CONTROL_PAUSE)
+        if(!pause && _statusCode == STATUS_PAUSE)
             _restart.signal();
         _controlCode = pause ? CONTROL_NEED_PAUSE : CONTROL_NEED_RUN;
     }
     virtual void set_exit(){
-        if(_statusCode == CONTROL_PAUSE)
+        if(_statusCode == STATUS_PAUSE)
             _restart.signal();
         _controlCode = CONTROL_NEED_EXIT;
+    }
+    virtual void wait_for_exit(){
+        #ifdef ZSPLUGIN_DEBUG
+        std::cout << this << " Plugin : " << this->_name << " pause and wait for exit." << std::endl;
+        #endif
+        _exit.wait(0);
+        #ifdef ZSPLUGIN_DEBUG
+        std::cout << this << " Plugin : " << this->_name << " has exited." << std::endl;
+        #endif
     }
     virtual void wait_for_restart(){
         #ifdef ZSPLUGIN_DEBUG
@@ -554,9 +567,9 @@ public:
     }
     virtual int response_to_control(){
         if(_controlCode == CONTROL_NEED_PAUSE){
-            _statusCode = CONTROL_PAUSE;
+            _statusCode = STATUS_PAUSE;
             wait_for_restart();
-            _statusCode = CONTROL_RUNNING;
+            _statusCode = STATUS_RUNNING;
         }
         return _controlCode;
     }
@@ -580,9 +593,9 @@ public:
     const static int CONTROL_NEED_PAUSE = 2;
     const static int CONTROL_NEED_EXIT  = 3;
 
-    const static int CONTROL_RUNNING    = 1;
-    const static int CONTROL_PAUSE      = 2;
-    const static int CONTROL_EXIT       = 3;
+    const static int STATUS_RUNNING    = 1;
+    const static int STATUS_PAUSE      = 2;
+    const static int STATUS_EXIT       = 3;
 
 private:
     std::map<std::string,std::list<ZSSemaData*>> _subscribers = {};
@@ -590,6 +603,7 @@ private:
     std::thread _t;
     std::string _name;
     SemaphoreO _restart;
+    SemaphoreO _exit;
 };
 
 #endif // __ZSS_PLUGIN_H__

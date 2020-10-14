@@ -17,11 +17,10 @@ UDPReceiver::~UDPReceiver(){
 }
 void UDPReceiver::run(){
 	ZSData data;
-	while(true){
+    while(response_to_control() != CONTROL_NEED_EXIT){
         std::this_thread::sleep_for(std::chrono::microseconds(300));
-        if(needExit) break;
         while (socket->state() == QUdpSocket::BoundState && socket->hasPendingDatagrams()) {
-			data.resize(socket->pendingDatagramSize());
+            data.resize(socket->pendingDatagramSize());
 			socket->readDatagram((char*)data.ptr(),data.size());
 			publish(this->msg,data);
 		}

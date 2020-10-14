@@ -23,7 +23,6 @@ namespace {
     auto& debugPointSize = p->size_debugPoint;
 }
 void FieldLineLayer::initFieldLinePath(){
-    qDebug() << "fieldline initfieldline function()";
     fieldLinePath.clear();
     fieldLinePath.addRect(t->x(-p->param_width / 2.0), t->y(-p->param_height / 2.0), t->w(p->param_width), t->h(p->param_height));
     fieldLinePath.addRect(t->x(-p->param_width / 2.0), t->y(-p->param_goalWidth / 2.0), t->w(-p->param_goalDepth), t->h(p->param_goalWidth));
